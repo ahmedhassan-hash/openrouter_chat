@@ -25,7 +25,7 @@ export async function sendChatMessage(
 ): Promise<string> {
   try {
     const completion = await openai.chat.completions.create({
-      model: options.model || "minimax/minimax-m2:free",
+      model: options.model || "tngtech/deepseek-r1t2-chimera:free",
       messages: options.messages,
     });
 
