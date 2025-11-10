@@ -1,23 +1,10 @@
-import { useState, useRef, useEffect } from "react";
-import { ChatMessage } from "@/components/ChatMessage";
-import { ChatInput } from "@/components/ChatInput";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Loader2, Globe, Trash2 } from "lucide-react";
-import { scrapeUrl, chatWithContext } from "@/lib/api";
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
+import { ChatCard } from "@/components/ChatCard";
+import { Header } from "@/components/Header";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { scrapeUrl, streamChat } from "@/lib/api";
+import type { Message, Source, TokenUsage, ToolCall } from "@/types";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -29,18 +16,29 @@ function App() {
     totalChunks: number;
     scrapedAt: string;
   } | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [mode, setMode] = useState<"simple" | "rag">("simple");
+  const [enableWebSearch, setEnableWebSearch] = useState(false);
+  const [status, setStatus] = useState<string>("");
+  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [showScrapeDialog, setShowScrapeDialog] = useState(false);
+  const [tokenUsage, setTokenUsage] = useState<TokenUsage>({
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+  });
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (mode === "rag" && !scrapedUrl && messages.length === 0) {
+      setShowScrapeDialog(true);
     }
-  }, [messages]);
+  }, [mode, scrapedUrl, messages.length]);
 
   const handleScrapeUrl = async () => {
     if (!urlInput.trim()) return;
 
     setIsScraping(true);
+    setError(null);
     try {
       const result = await scrapeUrl(urlInput.trim());
       setScrapedUrl(result.metadata.url);
@@ -50,20 +48,19 @@ function App() {
       });
       setMessages([]);
 
-      // Add success message
       const successMessage: Message = {
         role: "assistant",
-        content: `Successfully scraped ${result.metadata.url}! Found ${result.metadata.totalChunks} chunks of content. You can now ask me questions about it.`,
+        content: `Successfully scraped ${result.metadata.url}! Found ${result.metadata.totalChunks} chunks of content. You can now ask me questions about it using RAG mode.`,
       };
       setMessages([successMessage]);
+      toast.success("Website scraped successfully!");
+
+      setMode("rag");
+      setShowScrapeDialog(false);
     } catch (error) {
-      const errorMessage: Message = {
-        role: "assistant",
-        content: `Error scraping URL: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      };
-      setMessages([errorMessage]);
+      const errorMsg = error instanceof Error ? error.message : "Unknown error";
+      setError(`Failed to scrape URL: ${errorMsg}`);
+      toast.error(`Scraping failed: ${errorMsg}`);
     } finally {
       setIsScraping(false);
     }
@@ -74,134 +71,172 @@ function App() {
     setScrapedMetadata(null);
     setMessages([]);
     setUrlInput("");
+    setError(null);
+    setMode("simple");
+    setShowScrapeDialog(false);
+    toast.info("Context cleared");
   };
 
   const handleSendMessage = async (content: string) => {
-    if (!scrapedUrl) {
-      const errorMessage: Message = {
-        role: "assistant",
-        content: "Please scrape a URL first before asking questions.",
-      };
-      setMessages([errorMessage]);
+    if (mode === "rag" && !scrapedUrl) {
+      setError(
+        "Please scrape a URL first before using RAG mode, or switch to Simple mode."
+      );
+      toast.error("RAG mode requires scraped content");
       return;
     }
 
     const userMessage: Message = { role: "user", content };
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
+    setError(null);
+    setStatus("");
+    setToolCalls([]);
+    setTokenUsage({ input_tokens: 0, output_tokens: 0, total_tokens: 0 });
 
     try {
-      const response = await chatWithContext(content);
+      let assistantMessage = "";
+      let sources: Source[] = [];
+      const currentToolCalls: ToolCall[] = [];
 
-      const assistantMessage: Message = {
-        role: "assistant",
-        content: response.answer,
-      };
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "", isStreaming: true },
+      ]);
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      for await (const event of streamChat({
+        message: content,
+        mode,
+        enableWebSearch,
+      })) {
+        switch (event.type) {
+          case "status":
+          case "searching_rag":
+          case "found_documents":
+            setStatus(event.content || "");
+            break;
+
+          case "tool_call":
+            setStatus(event.content || "");
+            if (event.data?.tool && event.data?.query) {
+              currentToolCalls.push({
+                tool: event.data.tool,
+                query: event.data.query,
+              });
+              setToolCalls([...currentToolCalls]);
+            }
+            break;
+
+          case "token":
+            assistantMessage += event.content || "";
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              const lastMessage = newMessages[newMessages.length - 1];
+              if (lastMessage?.role === "assistant") {
+                lastMessage.content = assistantMessage;
+                lastMessage.isStreaming = true;
+              }
+              return newMessages;
+            });
+            break;
+
+          case "usage":
+            if (event.data) {
+              const usage: TokenUsage = {
+                input_tokens: event.data.input_tokens || 0,
+                output_tokens: event.data.output_tokens || 0,
+                total_tokens: event.data.total_tokens || 0,
+              };
+              setTokenUsage(usage);
+            }
+            break;
+
+          case "complete":
+            sources = event.data?.sources || [];
+            const finalUsage = event.data?.usage;
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              const lastMessage = newMessages[newMessages.length - 1];
+              if (lastMessage?.role === "assistant") {
+                lastMessage.sources = sources;
+                lastMessage.isStreaming = false;
+                if (finalUsage) {
+                  lastMessage.usage = finalUsage;
+                }
+              }
+              return newMessages;
+            });
+            if (finalUsage) {
+              setTokenUsage(finalUsage);
+            }
+            setStatus("");
+            break;
+
+          case "error":
+            throw new Error(event.content || "Unknown error");
+        }
+      }
     } catch (error) {
-      const errorMessage: Message = {
-        role: "assistant",
-        content: `Error: ${
-          error instanceof Error ? error.message : "Failed to get response"
-        }`,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      const errorMsg =
+        error instanceof Error ? error.message : "Failed to get response";
+      setError(errorMsg);
+      toast.error(errorMsg);
+
+      setMessages((prev) => {
+        const newMessages = prev.slice(0, -1);
+        return [
+          ...newMessages,
+          {
+            role: "assistant",
+            content: `Error: ${errorMsg}`,
+          },
+        ];
+      });
     } finally {
       setIsLoading(false);
+      setStatus("");
+      setToolCalls([]);
     }
   };
 
   return (
-    <div className="min-h-screen bg-background p-4">
-      <div className="max-w-4xl mx-auto h-[calc(100vh-2rem)] flex flex-col gap-4">
-        {/* URL Input Card */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Website Scraper</CardTitle>
-            <CardDescription>
-              Paste a URL to scrape and chat with the content
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  type="url"
-                  placeholder="https://example.com/documentation"
-                  value={urlInput}
-                  onChange={(e) => setUrlInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !isScraping) {
-                      handleScrapeUrl();
-                    }
-                  }}
-                  disabled={isScraping}
-                  className="pl-10"
-                />
-              </div>
-              <Button
-                onClick={handleScrapeUrl}
-                disabled={isScraping || !urlInput.trim()}
-              >
-                {isScraping ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Scraping...
-                  </>
-                ) : (
-                  "Scrape"
-                )}
-              </Button>
-              {scrapedUrl && (
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={handleClearContext}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-            {scrapedUrl && scrapedMetadata && (
-              <div className="mt-3 text-sm text-muted-foreground">
-                ✓ Scraped: <span className="font-medium">{scrapedUrl}</span> (
-                {scrapedMetadata.totalChunks} chunks)
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="flex-1 flex flex-col overflow-hidden">
-          <CardHeader>
-            <CardTitle>Chat with Website</CardTitle>
-          </CardHeader>
-          <CardContent className="flex-1 flex flex-col gap-4 overflow-hidden">
-            <ScrollArea className="flex-1 pr-4" ref={scrollRef}>
-              <div className="space-y-4">
-                {messages.length === 0 && !scrapedUrl && (
-                  <div className="text-center text-muted-foreground py-8">
-                    Scrape a website above to start chatting with its content
-                  </div>
-                )}
-                {messages.map((message, index) => (
-                  <ChatMessage key={index} message={message} />
-                ))}
-                {isLoading && (
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Thinking...</span>
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-            <ChatInput
-              onSend={handleSendMessage}
-              disabled={isLoading || !scrapedUrl}
+    <div className="min-h-screen bg-background">
+      <div className="container max-w-7xl mx-auto p-2 sm:p-4 h-screen flex flex-col gap-2 sm:gap-4">
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center">
+          <div className="flex-1 w-full">
+            <Header
+              mode={mode}
+              enableWebSearch={enableWebSearch}
+              scrapedUrl={scrapedUrl}
+              urlInput={urlInput}
+              isScraping={isScraping}
+              showScrapeDialog={showScrapeDialog}
+              scrapedMetadata={scrapedMetadata}
+              onModeChange={setMode}
+              onWebSearchChange={setEnableWebSearch}
+              onUrlInputChange={setUrlInput}
+              onScrape={handleScrapeUrl}
+              onClearContext={handleClearContext}
+              onScrapeDialogChange={setShowScrapeDialog}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </div>
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription className="text-sm">{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <ChatCard
+          messages={messages}
+          isLoading={isLoading}
+          status={status}
+          toolCalls={toolCalls}
+          mode={mode}
+          scrapedUrl={scrapedUrl}
+          onSendMessage={handleSendMessage}
+        />
       </div>
     </div>
   );
