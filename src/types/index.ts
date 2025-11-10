@@ -58,6 +58,7 @@ export interface StreamEvent {
 
 export interface ChatRequest {
   message: string;
+  chatHistory?: Array<{ role: "user" | "assistant" | "system"; content: string }>;
   mode?: "simple" | "rag";
   enableWebSearch?: boolean;
 }

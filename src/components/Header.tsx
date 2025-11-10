@@ -14,12 +14,14 @@ interface HeaderProps {
     totalChunks: number;
     scrapedAt: string;
   } | null;
+  messageCount: number;
   onModeChange: (mode: "simple" | "rag") => void;
   onWebSearchChange: (enabled: boolean) => void;
   onUrlInputChange: (value: string) => void;
   onScrape: () => void;
   onClearContext: () => void;
   onScrapeDialogChange: (open: boolean) => void;
+  onClearChat: () => void;
 }
 
 export function Header({
@@ -30,12 +32,14 @@ export function Header({
   isScraping,
   showScrapeDialog,
   scrapedMetadata,
+  messageCount,
   onModeChange,
   onWebSearchChange,
   onUrlInputChange,
   onScrape,
   onClearContext,
   onScrapeDialogChange,
+  onClearChat,
 }: HeaderProps) {
   return (
     <div className="flex items-center justify-between gap-2 sm:gap-4">
@@ -80,6 +84,8 @@ export function Header({
           enableWebSearch={enableWebSearch}
           onWebSearchChange={onWebSearchChange}
           scrapedUrl={scrapedUrl}
+          messageCount={messageCount}
+          onClearChat={onClearChat}
         />
       </div>
     </div>

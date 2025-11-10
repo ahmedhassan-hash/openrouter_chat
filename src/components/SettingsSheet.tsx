@@ -16,7 +16,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Settings2 } from "lucide-react";
+import { Settings2, Trash2 } from "lucide-react";
 
 interface SettingsSheetProps {
   mode: "simple" | "rag";
@@ -24,6 +24,8 @@ interface SettingsSheetProps {
   enableWebSearch: boolean;
   onWebSearchChange: (enabled: boolean) => void;
   scrapedUrl: string | null;
+  messageCount: number;
+  onClearChat: () => void;
 }
 
 export function SettingsSheet({
@@ -32,6 +34,8 @@ export function SettingsSheet({
   enableWebSearch,
   onWebSearchChange,
   scrapedUrl,
+  messageCount,
+  onClearChat,
 }: SettingsSheetProps) {
   return (
     <Sheet>
@@ -98,6 +102,21 @@ export function SettingsSheet({
               checked={enableWebSearch}
               onCheckedChange={onWebSearchChange}
             />
+          </div>
+
+          <div className="pt-4 border-t">
+            <Button
+              variant="destructive"
+              className="w-full gap-2"
+              onClick={onClearChat}
+              disabled={messageCount === 0}
+            >
+              <Trash2 className="h-4 w-4" />
+              Clear Chat History ({messageCount} messages)
+            </Button>
+            <p className="text-xs text-muted-foreground mt-2">
+              This will clear all messages and start a fresh conversation
+            </p>
           </div>
         </div>
       </SheetContent>

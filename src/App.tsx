@@ -72,6 +72,12 @@ function App() {
     toast.info("Context cleared");
   };
 
+  const handleClearChat = () => {
+    setMessages([]);
+    setError(null);
+    toast.info("Chat history cleared");
+  };
+
   const handleSendMessage = async (content: string) => {
     if (mode === "rag" && !scrapedUrl) {
       setError(
@@ -98,8 +104,14 @@ function App() {
         { role: "assistant", content: "", isStreaming: true },
       ]);
 
+      const chatHistory = messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
       for await (const event of streamChat({
         message: content,
+        chatHistory,
         mode,
         enableWebSearch,
       })) {
@@ -193,12 +205,14 @@ function App() {
               isScraping={isScraping}
               showScrapeDialog={showScrapeDialog}
               scrapedMetadata={scrapedMetadata}
+              messageCount={messages.length}
               onModeChange={setMode}
               onWebSearchChange={setEnableWebSearch}
               onUrlInputChange={setUrlInput}
               onScrape={handleScrapeUrl}
               onClearContext={handleClearContext}
               onScrapeDialogChange={setShowScrapeDialog}
+              onClearChat={handleClearChat}
             />
           </div>
         </div>
