@@ -2,7 +2,7 @@ import { ChatCard } from "@/components/ChatCard";
 import { Header } from "@/components/Header";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { scrapeUrl, streamChat } from "@/lib/api";
-import type { Message, Source, TokenUsage, ToolCall } from "@/types";
+import type { Message, Source, ToolCall } from "@/types";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
