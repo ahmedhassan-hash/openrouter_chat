@@ -22,11 +22,6 @@ function App() {
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showScrapeDialog, setShowScrapeDialog] = useState(false);
-  const [tokenUsage, setTokenUsage] = useState<TokenUsage>({
-    input_tokens: 0,
-    output_tokens: 0,
-    total_tokens: 0,
-  });
 
   useEffect(() => {
     if (mode === "rag" && !scrapedUrl && messages.length === 0) {
@@ -92,7 +87,6 @@ function App() {
     setError(null);
     setStatus("");
     setToolCalls([]);
-    setTokenUsage({ input_tokens: 0, output_tokens: 0, total_tokens: 0 });
 
     try {
       let assistantMessage = "";
@@ -140,17 +134,6 @@ function App() {
             });
             break;
 
-          case "usage":
-            if (event.data) {
-              const usage: TokenUsage = {
-                input_tokens: event.data.input_tokens || 0,
-                output_tokens: event.data.output_tokens || 0,
-                total_tokens: event.data.total_tokens || 0,
-              };
-              setTokenUsage(usage);
-            }
-            break;
-
           case "complete":
             sources = event.data?.sources || [];
             const finalUsage = event.data?.usage;
@@ -166,9 +149,7 @@ function App() {
               }
               return newMessages;
             });
-            if (finalUsage) {
-              setTokenUsage(finalUsage);
-            }
+
             setStatus("");
             break;
 
